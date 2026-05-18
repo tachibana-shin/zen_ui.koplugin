@@ -63,8 +63,10 @@ return {
         "Bug fixes and performance improvements",
     },
     ["1.3.0"] = {
+        "Add customizable top/bottom reader status bars",
+        "Add support for custom folder covers with image files",
         "Add better placeholders for folders/books",
-        "Add better support for non touchscreen devices",
+        "Add better support for legacy/non-touch devices",
         "Add toggle for whole word search matching (Global > Search)",
         "Add stack option for folder covers (Library > Folders > Covers)",
         "Add 2:3 and 3:4 cover ration in uniform covers (Library > Folders > Covers)",

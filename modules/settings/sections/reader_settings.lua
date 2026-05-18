@@ -21,67 +21,198 @@ function M.build(ctx)
     local items = {}
 
     -- -------------------------------------------------------------------------
-    -- Reader clock
+    -- Top status bar
     -- -------------------------------------------------------------------------
 
-    table.insert(items, {
-        text = _("Reader clock"),
-        sub_item_table = {
-            make_enable_feature_item("reader_clock", _("Enable reader clock")),
+    -- Items available in each slot (excludes dynamic fillers / external content)
+    local header_all_items = {
+        { key = "time",        text = _("Time")        },
+        { key = "battery",     text = _("Battery")     },
+        { key = "wifi",        text = _("Wi-Fi")       },
+        { key = "frontlight",  text = _("Brightness")  },
+        { key = "ram",         text = _("RAM usage")   },
+        { key = "disk",        text = _("Disk space")  },
+        { key = "custom_text", text = _("Custom text") },
+    }
+
+    local HEADER_CANONICAL = {
+        left   = { "time", "custom_text" },
+        center = { "time" },
+        right  = { "custom_text", "frontlight", "wifi", "battery" },
+    }
+
+    local function save_clock() save_and_apply("reader_top_status_bar") end
+
+    local function make_header_slot_items(slot_name, arrange_title)
+        local order_key = slot_name .. "_order"
+        local canonical = HEADER_CANONICAL[slot_name] or {}
+        local canon_pos = {}
+        for idx, k in ipairs(canonical) do canon_pos[k] = idx end
+        local other_slots = {}
+        for _i, s in ipairs({ "left", "center", "right" }) do
+            if s ~= slot_name then table.insert(other_slots, s .. "_order") end
+        end
+
+        local t = {
             {
-                text = _("Position"),
-                sub_item_table = {
-                    {
-                        text = _("Left"),
-                        checked_func = function()
-                            local pos = config.reader_clock and config.reader_clock.position
-                            return pos == "left"
-                        end,
+                text = _("Arrange"),
+                keep_menu_open = true,
+                separator = true,
+                callback = function()
+                    local SortWidget = require("ui/widget/sortwidget")
+                    local lbl = {}
+                    for _i, d in ipairs(header_all_items) do lbl[d.key] = d.text end
+                    if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                    local cur = config.reader_top_status_bar[order_key] or {}
+                    local sort_items = {}
+                    for _i, key in ipairs(cur) do
+                        if lbl[key] then table.insert(sort_items, { text = lbl[key], orig_item = key }) end
+                    end
+                    UIManager:show(SortWidget:new{
+                        title = arrange_title,
+                        item_table = sort_items,
                         callback = function()
-                            if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                            config.reader_clock.position = "left"
-                            save_and_apply("reader_clock")
+                            local new_order = {}
+                            for _i, item in ipairs(sort_items) do
+                                table.insert(new_order, item.orig_item)
+                            end
+                            config.reader_top_status_bar[order_key] = new_order
+                            save_clock()
                         end,
-                    },
-                    {
-                        text = _("Center"),
-                        checked_func = function()
-                            local pos = config.reader_clock and config.reader_clock.position
-                            return pos == nil or pos == "center"
-                        end,
-                        callback = function()
-                            if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                            config.reader_clock.position = "center"
-                            save_and_apply("reader_clock")
-                        end,
-                    },
-                    {
-                        text = _("Right"),
-                        checked_func = function()
-                            local pos = config.reader_clock and config.reader_clock.position
-                            return pos == "right"
-                        end,
-                        callback = function()
-                            if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                            config.reader_clock.position = "right"
-                            save_and_apply("reader_clock")
-                        end,
-                    },
-                },
+                    })
+                end,
+            },
+        }
+
+        for _i, def in ipairs(header_all_items) do
+            local key = def.key
+            table.insert(t, {
+                text = def.text,
+                keep_menu_open = true,
+                enabled_func = function()
+                    -- Disable if the key is active in another slot.
+                    if type(config.reader_top_status_bar) ~= "table" then return true end
+                    for _j, other in ipairs(other_slots) do
+                        for _k, k in ipairs(config.reader_top_status_bar[other] or {}) do
+                            if k == key then return false end
+                        end
+                    end
+                    return true
+                end,
+                checked_func = function()
+                    if type(config.reader_top_status_bar) ~= "table" then return false end
+                    for _j, k in ipairs(config.reader_top_status_bar[order_key] or {}) do
+                        if k == key then return true end
+                    end
+                    return false
+                end,
+                callback = function(touchmenu_instance)
+                    if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                    local this_order = config.reader_top_status_bar[order_key] or {}
+                    local found = false
+                    local new_this = {}
+                    for _j, k in ipairs(this_order) do
+                        if k == key then found = true else table.insert(new_this, k) end
+                    end
+                    if found then
+                        config.reader_top_status_bar[order_key] = new_this
+                    else
+                        -- Remove from any other slot first.
+                        for _j, other in ipairs(other_slots) do
+                            local new_other = {}
+                            for _k, k in ipairs(config.reader_top_status_bar[other] or {}) do
+                                if k ~= key then table.insert(new_other, k) end
+                            end
+                            config.reader_top_status_bar[other] = new_other
+                        end
+                        -- Insert at canonical position.
+                        local new_key_pos = canon_pos[key] or math.huge
+                        local insert_at = #this_order + 1
+                        for idx, k in ipairs(this_order) do
+                            if (canon_pos[k] or math.huge) > new_key_pos then
+                                insert_at = idx
+                                break
+                            end
+                        end
+                        table.insert(this_order, insert_at, key)
+                        config.reader_top_status_bar[order_key] = this_order
+                    end
+                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                    save_clock()
+                end,
+            })
+        end
+        return t
+    end
+
+    table.insert(items, {
+        text = _("Top status bar"),
+        sub_item_table = {
+            make_enable_feature_item("reader_top_status_bar", _("Enable top status bar")),
+            {
+                text = _("Left items"),
+                sub_item_table = make_header_slot_items("left", _("Arrange left items")),
+            },
+            {
+                text = _("Center items"),
+                sub_item_table = make_header_slot_items("center", _("Arrange center items")),
+            },
+            {
+                text = _("Right items"),
+                sub_item_table = make_header_slot_items("right", _("Arrange right items")),
+            },
+            {
+                text_func = function()
+                    local name = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.custom_text or ""
+                    local Device = require("device")
+                    if name == nil or name == "" then name = Device.model or "" end
+                    return _("Custom text: ") .. name
+                end,
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    local InputDialog = require("ui/widget/inputdialog")
+                    local Device = require("device")
+                    local dlg
+                    dlg = InputDialog:new{
+                        title = _("Custom text"),
+                        input = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.custom_text or "",
+                        hint = Device.model or "",
+                        buttons = {{
+                            {
+                                text = _("Cancel"),
+                                id = "close",
+                                callback = function() UIManager:close(dlg) end,
+                            },
+                            {
+                                text = _("Set"),
+                                is_enter_default = true,
+                                callback = function()
+                                    if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                                    config.reader_top_status_bar.custom_text = dlg:getInputText()
+                                    UIManager:close(dlg)
+                                    save_clock()
+                                    if touchmenu_instance then touchmenu_instance:updateItems() end
+                                end,
+                            },
+                        }},
+                    }
+                    UIManager:show(dlg)
+                    dlg:onShowKeyboard()
+                end,
             },
             {
                 text_func = function()
                     local ok_fc, FontChooser = pcall(require, "ui/widget/fontchooser")
-                    local face = config.reader_clock and config.reader_clock.font_face
+                    local face = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.font_face
                     local text = (not face or face == "default") and _("default")
                         or (ok_fc and FontChooser.getFontNameText(face) or face)
-                    local size = config.reader_clock and config.reader_clock.font_size or 14
+                    local size = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.font_size or 14
                     return string.format("%s %s, %s", _("Font:"), text, size)
                 end,
                 sub_item_table = {
                     {
                         text_func = function()
-                            local size = config.reader_clock and config.reader_clock.font_size or 14
+                            local size = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.font_size or 14
                             return string.format("%s %s", _("Font size:"), size)
                         end,
                         keep_menu_open = true,
@@ -89,14 +220,14 @@ function M.build(ctx)
                             local SpinWidget = require("ui/widget/spinwidget")
                             UIManager:show(SpinWidget:new{
                                 title_text = _("Font size"),
-                                value = config.reader_clock and config.reader_clock.font_size or 14,
+                                value = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.font_size or 14,
                                 value_min = 8,
                                 value_max = 36,
                                 default_value = 14,
                                 callback = function(spin)
-                                    if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                                    config.reader_clock.font_size = spin.value
-                                    save_and_apply("reader_clock")
+                                    if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                                    config.reader_top_status_bar.font_size = spin.value
+                                    save_clock()
                                     if touchmenu_instance then touchmenu_instance:updateItems() end
                                 end,
                             })
@@ -105,7 +236,7 @@ function M.build(ctx)
                     {
                         text_func = function()
                             local ok_fc, FontChooser = pcall(require, "ui/widget/fontchooser")
-                            local face = config.reader_clock and config.reader_clock.font_face
+                            local face = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.font_face
                             local text = (not face or face == "default") and _("default")
                                 or (ok_fc and FontChooser.getFontNameText(face) or face)
                             return string.format("%s %s", _("Font:"), text)
@@ -116,28 +247,28 @@ function M.build(ctx)
                             if not ok_fc then return end
                             local footer_settings = G_reader_settings:readSetting("footer") or {}
                             local footer_font = footer_settings.text_font_face or "NotoSans-Regular.ttf"
-                            local current_face = config.reader_clock and config.reader_clock.font_face
+                            local current_face = type(config.reader_top_status_bar) == "table" and config.reader_top_status_bar.font_face
                             local display_face = (not current_face or current_face == "default")
                                 and footer_font or current_face
                             UIManager:show(FontChooser:new{
-                                title = _("Reader clock font"),
+                                title = _("Top bar font"),
                                 font_file = display_face,
                                 default_font_file = footer_font,
                                 callback = function(file)
-                                    if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                                    if config.reader_clock.font_face ~= file then
-                                        config.reader_clock.font_face = file
-                                        save_and_apply("reader_clock")
+                                    if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                                    if config.reader_top_status_bar.font_face ~= file then
+                                        config.reader_top_status_bar.font_face = file
+                                        save_clock()
                                         if touchmenu_instance then touchmenu_instance:updateItems() end
                                     end
                                 end,
                             })
                         end,
                         hold_callback = function(touchmenu_instance)
-                            if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                            if config.reader_clock.font_face ~= "default" then
-                                config.reader_clock.font_face = "default"
-                                save_and_apply("reader_clock")
+                            if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                            if config.reader_top_status_bar.font_face ~= "default" then
+                                config.reader_top_status_bar.font_face = "default"
+                                save_clock()
                                 if touchmenu_instance then touchmenu_instance:updateItems() end
                             end
                         end,
@@ -149,9 +280,9 @@ function M.build(ctx)
                             return ok
                         end,
                         callback = function(touchmenu_instance)
-                            if type(config.reader_clock) ~= "table" then config.reader_clock = {} end
-                            config.reader_clock.font_face = "default"
-                            save_and_apply("reader_clock")
+                            if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
+                            config.reader_top_status_bar.font_face = "default"
+                            save_clock()
                             if touchmenu_instance then touchmenu_instance:updateItems() end
                         end,
                     },
@@ -199,8 +330,8 @@ function M.build(ctx)
 
             local function apply_footer_preset(preset)
                 ui.view.footer:loadPreset(resolve_preset_font(preset))
-                config.features["reader_clock"] = true
-                save_and_apply("reader_clock")
+                config.features["reader_top_status_bar"] = true
+                save_and_apply("reader_top_status_bar")
                 if ui.rolling then
                     ui.document.configurable.status_line = 1
                     ui:handleEvent(Event:new("SetStatusLine", 1))

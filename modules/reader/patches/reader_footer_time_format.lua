@@ -12,7 +12,7 @@ local function apply_reader_footer_time_format()
     local orig_filler = ReaderFooter.textGeneratorMap.dynamic_filler
 
     -- Capture at apply time (while __ZEN_UI_PLUGIN is set); fall back to
-    -- re-reading the global for late callers (same pattern as reader_clock.lua).
+    -- re-reading the global for late callers (same pattern as reader_top_status_bar.lua).
     local zen_plugin = rawget(_G, "__ZEN_UI_PLUGIN")
 
     local function is_verbose()

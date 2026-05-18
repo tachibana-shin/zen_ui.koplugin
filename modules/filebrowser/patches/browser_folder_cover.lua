@@ -35,17 +35,54 @@ local function apply_browser_folder_cover()
     local _ = require("gettext")
     local Screen = Device.screen
 
-    local FolderCover = {
-        name = ".cover",
-        exts = { ".jpg", ".jpeg", ".png", ".webp", ".gif" },
-    }
+    local _COVER_EXTS = { ".jpg", ".jpeg", ".png", ".webp", ".gif" }
 
+    -- Primary: visible cover.* files; fallback: hidden .cover.*
     local function findCover(dir_path)
-        local path = dir_path .. "/" .. FolderCover.name
-        for _, ext in ipairs(FolderCover.exts) do
-            local fname = path .. ext
+        for _i, ext in ipairs(_COVER_EXTS) do
+            local fname = dir_path .. "/cover" .. ext
             if util.fileExists(fname) then return fname end
         end
+        for _i, ext in ipairs(_COVER_EXTS) do
+            local fname = dir_path .. "/.cover" .. ext
+            if util.fileExists(fname) then return fname end
+        end
+    end
+
+    -- Finds cover1-4.* files for gallery/stack modes.
+    -- cover.* / .cover.* are interchangeable with cover1.*.
+    local function findGalleryCovers(dir_path)
+        local result = {}
+        for i = 1, 4 do
+            for _i, ext in ipairs(_COVER_EXTS) do
+                local fname = dir_path .. "/cover" .. i .. ext
+                if util.fileExists(fname) then
+                    result[i] = fname
+                    break
+                end
+            end
+        end
+        if not result[1] then
+            result[1] = findCover(dir_path)
+        end
+        return result
+    end
+
+    -- Loads cover file paths as {data, w, h} entries for Cover.makeCover covers_data.
+    local function loadCoverFiles(gfiles)
+        local RenderImage = require("ui/renderimage")
+        local result = {}
+        for i = 1, 4 do
+            if gfiles[i] then
+                local ok, bb = pcall(function()
+                    return RenderImage:renderImageFile(gfiles[i], false)
+                end)
+                if ok and bb then
+                    table.insert(result, { data = bb, w = bb:getWidth(), h = bb:getHeight() })
+                end
+            end
+        end
+        return #result > 0 and result or nil
     end
 
     local function getMenuItem(menu, ...)
@@ -277,6 +314,9 @@ local function apply_browser_folder_cover()
             if ok then BookInfoManager = bim end
         end
         if not BookInfoManager then return end
+
+        -- Force-disable the "show hint for books with description" indicator.
+        BookInfoManager:saveSetting("no_hint_description", true)
         local original_update = MosaicMenuItem.update
         local logger = require("logger")
         local UIManager = require("ui/uimanager")
@@ -703,14 +743,14 @@ local function apply_browser_folder_cover()
                 local portrait_w, portrait_h = Cover.calcDims(max_w, bh)
                 local dimen = { w = portrait_w + 2 * border, h = portrait_h + 2 * border }
                 local centered_top = math.floor((self.height - dimen.h) / 2)
-                
+
                 local arrow_size = math.min(portrait_w, portrait_h) * 0.25
                 local arrow_text = TextWidget:new{
                     text = "↑",
                     face = Font:getFace("cfont", math.floor(arrow_size)),
                     fgcolor = Blitbuffer.COLOR_BLACK,
                 }
-                
+
                 local gray_frame = FrameContainer:new {
                     padding = 0,
                     bordersize = border,
@@ -725,9 +765,9 @@ local function apply_browser_folder_cover()
                     },
                     overlap_align = "center",
                 }
-                
+
                 self._cover_frame = gray_frame
-                
+
                 local widget = OverlapGroup:new {
                     dimen = { w = self.width, h = self.height },
                     VerticalGroup:new {
@@ -757,21 +797,18 @@ local function apply_browser_folder_cover()
                 return
             end
 
-            -- Custom cover image
-            local cover_file = findCover(dir_path)
-            if cover_file then
-                local success, w, h = pcall(function()
-                    local tmp_img = ImageWidget:new { file = cover_file, scale_factor = 1 }
-                    tmp_img:_render()
-                    local orig_w = tmp_img:getOriginalWidth()
-                    local orig_h = tmp_img:getOriginalHeight()
-                    tmp_img:free()
-                    return orig_w, orig_h
-                end)
-                if success then
-                    self._foldercover_processed = true
-                    self:_setFolderCover { file = cover_file, w = w, h = h, scale_to_fit = settings.crop_to_fit.get() }
-                    return
+            -- Cover files: explicit images feed into the makeCover pipeline (respects all settings).
+            local _file_covers_data
+            if settings.gallery_mode.get() or settings.stack_mode.get() then
+                local gfiles = findGalleryCovers(dir_path)
+                if gfiles[1] or gfiles[2] or gfiles[3] or gfiles[4] then
+                    _file_covers_data = loadCoverFiles(gfiles)
+                end
+            end
+            if not _file_covers_data then
+                local cover_file = findCover(dir_path)
+                if cover_file then
+                    _file_covers_data = loadCoverFiles({ cover_file })
                 end
             end
 
@@ -780,8 +817,10 @@ local function apply_browser_folder_cover()
             local _chooser = _main_chooser
                 or (self.menu.genItemTableFromPath and self.menu)
             if not _chooser then
-                self._foldercover_processed = true
-                return
+                if not _file_covers_data then
+                    self._foldercover_processed = true
+                    return
+                end
             end
 
             -- Use unified makeCover - handles everything
@@ -790,14 +829,15 @@ local function apply_browser_folder_cover()
             local bh = self.height - 2 * border
             local folder_name = dir_path:match("([^/]+)/?$") or dir_path
             folder_name = BD.directory(folder_name)
-            
+
             local cover_widget, mode, scenario = Cover.makeCover(dir_path, _chooser, {
                 is_folder = true,
                 max_w = max_w,
                 max_h = bh,
                 folder_name = folder_name,
+                covers_data = _file_covers_data,
             })
-            
+
             -- Pass the cover widget to _setFolderCover
             if cover_widget then
                 self._foldercover_processed = true
@@ -826,7 +866,7 @@ local function apply_browser_folder_cover()
 
             -- Use the image_widget if provided by makeCover, otherwise draw based on img type
             local image_widget = img.image_widget
-            
+
             if not image_widget then
                 if img.gallery then
                     image_widget = Cover.drawGallery(img.gallery, portrait_w, portrait_h, border, placeholderBg)
@@ -854,12 +894,12 @@ local function apply_browser_folder_cover()
 
             self._zen_cover_dimen = dimen
             self._zen_cover_top = math.floor((eff_h - dimen.h) / 2)
-            
+
             local _file_count = type(self.mandatory) == "string"
                 and (tonumber(self.mandatory:match("(%d+)%s*\xef\x80\x96")) or 0) or 0
             self._zen_folder_count = (settings.show_item_count.get() and _file_count > 0)
                 and _file_count or nil
-            
+
             local directory = self:_getTextBoxes { w = portrait_w, h = portrait_h }
 
             local folder_name_widget
@@ -1061,20 +1101,18 @@ local function apply_browser_folder_cover()
                     local dir_path = self.entry and self.entry.path
                     if not dir_path then return end
 
-                    local cover_file = findCover(dir_path)
-                    if cover_file then
-                        local success, w, h = pcall(function()
-                            local tmp_img = ImageWidget:new { file = cover_file, scale_factor = 1 }
-                            tmp_img:_render()
-                            local orig_w = tmp_img:getOriginalWidth()
-                            local orig_h = tmp_img:getOriginalHeight()
-                            tmp_img:free()
-                            return orig_w, orig_h
-                        end)
-                        if success then
-                            self._foldercover_processed = true
-                            self:_setListFolderCover { file = cover_file, w = w, h = h, scale_to_fit = settings.crop_to_fit.get() }
-                            return
+                    -- Cover files: explicit images feed into the makeCover pipeline (respects all settings).
+                    local _file_covers_data
+                    if settings.gallery_mode.get() or settings.stack_mode.get() then
+                        local gfiles = findGalleryCovers(dir_path)
+                        if gfiles[1] or gfiles[2] or gfiles[3] or gfiles[4] then
+                            _file_covers_data = loadCoverFiles(gfiles)
+                        end
+                    end
+                    if not _file_covers_data then
+                        local cover_file = findCover(dir_path)
+                        if cover_file then
+                            _file_covers_data = loadCoverFiles({ cover_file })
                         end
                     end
 
@@ -1083,14 +1121,16 @@ local function apply_browser_folder_cover()
                     local _chooser = _main_ch
                         or (self.menu.genItemTableFromPath and self.menu)
                     if not _chooser then
-                        self._foldercover_processed = true
-                        return
+                        if not _file_covers_data then
+                            self._foldercover_processed = true
+                            return
+                        end
                     end
 
                     -- Use unified makeCover - handles everything
                     local folder_name = dir_path:match("([^/]+)/?$") or dir_path
                     folder_name = BD.directory(folder_name)
-                    
+
                     -- Get dimensions for list mode
                     local underline_h = 1
                     local dimen_h = self.height - 2 * underline_h
@@ -1099,14 +1139,15 @@ local function apply_browser_folder_cover()
                     local max_img = dimen_h - 2 * border_size - 2 * cover_v_pad
                     local ratio = Cover.getRatio()
                     local cover_w = math.floor(max_img * ratio)
-                    
+
                     local cover_widget, mode, scenario = Cover.makeCover(dir_path, _chooser, {
                         is_folder = true,
                         max_w = cover_w + 2 * border_size,
                         max_h = max_img + 2 * border_size,
                         folder_name = folder_name,
+                        covers_data = _file_covers_data,
                     })
-                    
+
                     if cover_widget then
                         self._foldercover_processed = true
                         self:_setListFolderCover { image_widget = cover_widget }
@@ -1134,12 +1175,12 @@ local function apply_browser_folder_cover()
                     local portrait_w = math.floor(max_img * ratio)
                     local cover_w = portrait_w + 2 * border_size
                     local spine_x = math.max(0, math.floor((cover_zone_w - cover_w) / 2))
-                    
+
                     local white_bg = function() return Blitbuffer.COLOR_WHITE end
                     local light_gray_bg = function() return Blitbuffer.COLOR_LIGHT_GRAY end
-                    
+
                     local cover_display_widget = img.image_widget
-                    
+
                     if not cover_display_widget then
                         if img.gallery then
                             cover_display_widget = Cover.drawGallery(img.gallery, portrait_w, max_img, border_size, light_gray_bg)
@@ -1165,7 +1206,7 @@ local function apply_browser_folder_cover()
                             cover_display_widget = Cover.drawNoImage(folder_name, portrait_w, max_img, border_size, white_bg)
                         end
                     end
-                    
+
                     local wleft = CenterContainer:new {
                         dimen = { w = cover_zone_w, h = dimen_h },
                         cover_display_widget,

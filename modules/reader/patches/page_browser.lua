@@ -1680,6 +1680,15 @@ local function apply_page_browser()
                 return _orig_onSwipeShowConfigMenu(self_rc, ges)
             end
         end
+
+        -- suppress bottom tap opening the native config menu when Zen owns the zone
+        local _orig_onTapShowConfigMenu = ReaderConfig.onTapShowConfigMenu
+        ReaderConfig.onTapShowConfigMenu = function(self_rc)
+            if is_bottom_swipe_enabled() then return end
+            if _orig_onTapShowConfigMenu then
+                return _orig_onTapShowConfigMenu(self_rc)
+            end
+        end
     end
 
 end -- apply_page_browser

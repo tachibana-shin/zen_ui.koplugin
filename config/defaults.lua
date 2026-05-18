@@ -40,7 +40,7 @@ local defaults = {
         browser_cover_rounded_corners = true,
         browser_cover_mosaic_uniform = true,
         partial_page_repaint = false,
-        reader_clock = true,
+        reader_top_status_bar = true,
         reader_bottom_menu = false,
         night_mode_schedule = false,
         warmth_schedule     = false,
@@ -155,11 +155,15 @@ local defaults = {
     context_menu = {
         allow_delete = false,
     },
-    reader_clock = {
-        use_24h = false,
-        position = "center",
+    reader_top_status_bar = {
         font_face = "default",
         font_size = 14,
+        left_order       = {},
+        center_order     = { "time" },
+        right_order      = {},
+        separator_key    = "small-space",
+        custom_separator = "  ",
+        custom_text      = "",
     },
     reader_footer = {
         verbose_chapter_time = false,

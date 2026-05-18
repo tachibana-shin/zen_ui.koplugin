@@ -184,6 +184,10 @@ Please follow these guidelines:
 - **Review AI-generated code** - If using AI tools, all code must be thoroughly reviewed and tested before submitting (this should happen anyway but even moreso for AI generated code)
 - **Maintain consistency** - New code must align with the project's existing style, theme, and overall user experience
 
+## FAQ/Community
+
+Feel free to join the [Discord Community](https://discord.gg/wb6p2JMJYM) if you want to get help/chat/contribute
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.

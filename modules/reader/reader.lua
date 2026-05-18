@@ -4,8 +4,9 @@ local initialized = false
 local PATCH_MODULES = {
     opening_banner = "modules/reader/patches/opening_banner",
     book_status = "modules/reader/patches/book_status",
-    reader_clock = "modules/reader/patches/reader_clock",
+    reader_top_status_bar = "modules/reader/patches/reader_top_status_bar",
     screensaver_cover = "modules/reader/patches/screensaver_cover",
+    reader_footer = "modules/reader/patches/reader_footer",
     reader_footer_time_format = "modules/reader/patches/reader_footer_time_format",
     reader_footer_cbz_hide = "modules/reader/patches/reader_footer_cbz_hide",
     margin_hold_guard = "modules/reader/patches/margin_hold_guard",
@@ -74,6 +75,12 @@ function M.init(logger, plugin)
         run_feature(logger, plugin, "screensaver_cover", screensaver_cover_fn)
     end
 
+    -- Always apply: two-filler L/C/R layout support.
+    local reader_footer_fn = load_patch("reader_footer")
+    if reader_footer_fn then
+        run_feature(logger, plugin, "reader_footer", reader_footer_fn)
+    end
+
     -- Always apply: format time_to_chapter in Kindle style ("X mins left in chapter")
     local reader_footer_time_format_fn = load_patch("reader_footer_time_format")
     if reader_footer_time_format_fn then
@@ -119,15 +126,15 @@ function M.init(logger, plugin)
         _G.__ZEN_UI_RUNTIME_PATCHES = runtime_patches
     end
 
-    if is_feature_enabled(plugin, "reader_clock") then
-        local fn = load_patch("reader_clock")
+    if is_feature_enabled(plugin, "reader_top_status_bar") then
+        local fn = load_patch("reader_top_status_bar")
         if fn then
-            local ok = run_feature(logger, plugin, "reader_clock", fn)
+            local ok = run_feature(logger, plugin, "reader_top_status_bar", fn)
             if ok then
-                runtime_patches["reader_clock"] = true
+                runtime_patches["reader_top_status_bar"] = true
             end
         elseif logger then
-            logger.warn("zen-ui: reader patch module missing", "reader_clock")
+            logger.warn("zen-ui: reader patch module missing", "reader_top_status_bar")
         end
     end
 
