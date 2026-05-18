@@ -314,6 +314,9 @@ local function apply_browser_folder_cover()
             if ok then BookInfoManager = bim end
         end
         if not BookInfoManager then return end
+
+        -- Force-disable the "show hint for books with description" indicator.
+        BookInfoManager:saveSetting("no_hint_description", true)
         local original_update = MosaicMenuItem.update
         local logger = require("logger")
         local UIManager = require("ui/uimanager")
