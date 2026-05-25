@@ -81,4 +81,11 @@ return {
         "Add Czech translation",
         "Bug fixes and performance improvements",
     },
+    ["1.4.0"] = {
+        "Add book title, author, chapter to top reader status bar",
+        "Add Japanese translation",
+        "Add Vietnamese translation",
+        "Update quick lookup for next KOReader release",
+        "Bug fixes and performance improvements",
+    },
 }
