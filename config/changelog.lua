@@ -83,7 +83,8 @@ return {
     },
     ["1.4.0"] = {
         "Refresh visuals for update checking",
-        "Add option to disable automatic update checking",
+        "Enhance Zen UI update security + method",
+        "Add option to disable automatic update checking (About > Updates)",
         "Add changelog for previous versions",
         "Add book title, author, chapter to top reader status bar",
         "Add Japanese translation",

@@ -962,6 +962,181 @@ function M.latest_version()
     return M._latest_ver
 end
 
+local function run_shell_ok(cmd, label)
+    logger.dbg("ZenUpdater: shell start", label or "", cmd)
+    local rc, how, code = os.execute(cmd)
+    local ok
+    if rc == true then
+        ok = true
+    elseif type(rc) == "number" then
+        ok = rc == 0
+    else
+        ok = rc ~= nil and how == "exit" and code == 0
+    end
+    logger.dbg("ZenUpdater: shell done", label or "", "ok=", tostring(ok), "rc=", tostring(rc), "how=", tostring(how), "code=", tostring(code))
+    return ok
+end
+
+local function path_exists(path)
+    return run_shell_ok(string.format("test -e %q", path))
+end
+
+local function path_is_dir(path)
+    return run_shell_ok(string.format("test -d %q", path))
+end
+
+local function path_is_readable_file(path)
+    return run_shell_ok(string.format("test -r %q", path))
+end
+
+local function collect_zip_entries_with_command(cmd, label)
+    logger.dbg("ZenUpdater: zip list start", label, cmd)
+    local pipe = io.popen(cmd)
+    if not pipe then
+        logger.warn("ZenUpdater: zip list popen failed method=", label)
+        return nil
+    end
+
+    local entries = {}
+    for line in pipe:lines() do
+        local entry = (line or ""):gsub("\r", "")
+        if entry ~= "" then
+            entries[#entries + 1] = entry
+        end
+    end
+
+    local close_ok = pcall(pipe.close, pipe)
+    if not close_ok then
+        logger.warn("ZenUpdater: zip list close failed method=", label)
+        return nil
+    end
+
+    logger.dbg("ZenUpdater: zip list done method=", label, "entry_count=", #entries)
+    if #entries == 0 then
+        return nil
+    end
+    return entries
+end
+
+local function collect_zip_entries(zip_path)
+    local listed = collect_zip_entries_with_command(
+        string.format("unzip -l %q 2>/dev/null", zip_path),
+        "unzip_list"
+    )
+    if not listed then
+        return nil
+    end
+
+    local parsed = {}
+    for _i, line in ipairs(listed) do
+        local name = line:match("^%s*%d+%s+[%d%-%/]+%s+[%d:]+%s+(.+)%s*$")
+        if name and name ~= "Name" then
+            parsed[#parsed + 1] = name
+        end
+    end
+
+    logger.dbg("ZenUpdater: zip list parsed method=unzip_list entry_count=", #parsed)
+    if #parsed == 0 then
+        return nil
+    end
+    return parsed
+end
+
+local function validate_zip_layout(zip_path, plugin_name)
+    logger.dbg("ZenUpdater: validate_zip_layout zip=", zip_path, "plugin_name=", plugin_name)
+    local entries = collect_zip_entries(zip_path)
+    if not entries then
+        logger.warn("ZenUpdater: validate_zip_layout failed to list zip entries")
+        return false, "zip list failed"
+    end
+
+    local prefix = plugin_name .. "/"
+    local saw_prefix = false
+    local entry_count = #entries
+    local sample_entries = {}
+    for _i, entry in ipairs(entries) do
+        if #sample_entries < 8 then
+            sample_entries[#sample_entries + 1] = entry
+        end
+        if entry:sub(1, 1) == "/" or entry:find("%.%./", 1, true) or entry:find("/%.%.", 1, true) then
+            logger.warn("ZenUpdater: validate_zip_layout unsafe entry:", entry)
+            return false, "unsafe zip entry path"
+        end
+        if entry == plugin_name or entry:sub(1, #prefix) == prefix then
+            saw_prefix = true
+        else
+            logger.warn("ZenUpdater: validate_zip_layout unexpected root entry:", entry)
+            return false, "unexpected zip root"
+        end
+    end
+
+    if not saw_prefix then
+        logger.warn(
+            "ZenUpdater: validate_zip_layout missing plugin root expected=",
+            plugin_name,
+            "entry_count=",
+            entry_count,
+            "sample=",
+            table.concat(sample_entries, " | ")
+        )
+        return false, "zip missing plugin root"
+    end
+    logger.dbg(
+        "ZenUpdater: validate_zip_layout ok expected=",
+        plugin_name,
+        "entry_count=",
+        entry_count,
+        "sample=",
+        table.concat(sample_entries, " | ")
+    )
+    return true
+end
+
+local function validate_plugin_tree(root)
+    logger.dbg("ZenUpdater: validate_plugin_tree root=", root)
+    if not path_is_dir(root) then
+        logger.warn("ZenUpdater: validate_plugin_tree missing dir:", root)
+        return false, "plugin folder missing"
+    end
+    local required = {
+        "_meta.lua",
+        "main.lua",
+        "common/zen_screen.lua",
+        "modules/settings/zen_updater.lua",
+    }
+    for _i, rel in ipairs(required) do
+        if not path_is_readable_file(root .. "/" .. rel) then
+            logger.warn("ZenUpdater: validate_plugin_tree missing required file:", root .. "/" .. rel)
+            return false, "missing " .. rel
+        end
+    end
+    logger.dbg("ZenUpdater: validate_plugin_tree ok root=", root)
+    return true
+end
+
+local function prepare_plugins_dir_writable(plugins_dir)
+    logger.dbg("ZenUpdater: prepare_plugins_dir_writable dir=", plugins_dir)
+    local probe = plugins_dir .. "/.zen_ui_update_write_probe"
+    local f = io.open(probe, "wb")
+    if not f then
+        logger.warn("ZenUpdater: plugins dir write probe open failed path=", probe)
+        return false
+    end
+    f:write("ok")
+    f:close()
+    os.remove(probe)
+    logger.dbg("ZenUpdater: prepare_plugins_dir_writable ok")
+    return true
+end
+
+local function safe_remove_tree(path)
+    return run_shell_ok(string.format("rm -rf %q", path), "remove_tree")
+end
+
+local function safe_rename(src, dst)
+    return run_shell_ok(string.format("mv %q %q", src, dst), "rename")
+end
+
 --- Download, unpack, and reboot using an existing ZenScreen for all UI feedback.
 local function _do_install(screen, plugin_root, plugins_dir)
     local UIManager = require("ui/uimanager")
@@ -972,24 +1147,59 @@ local function _do_install(screen, plugin_root, plugins_dir)
         return ok_nm and NetworkMgr and NetworkMgr:isWifiOn()
     end
 
+    logger.info("ZenUpdater: install begin plugin_root=", plugin_root, "plugins_dir=", plugins_dir)
+
     if not is_valid_asset_url(M._dl_url) or not is_valid_sha256_digest(M._latest_sha256) then
+        logger.dbg("ZenUpdater: install metadata invalid, re-checking network state")
         do_network_check()
     end
     if not is_valid_asset_url(M._dl_url) then
+        logger.warn("ZenUpdater: install abort invalid dl url:", tostring(M._dl_url))
         screen:update{ subtitle = _("No update asset found."), button = _("OK"), dismissable = true }
         return
     end
     if not is_valid_sha256_digest(M._latest_sha256) then
+        logger.warn("ZenUpdater: install abort invalid/missing sha256")
         screen:update{ subtitle = _("Update failed: missing checksum."), button = _("OK"), dismissable = true }
         return
     end
 
     if not has_network() then
+        logger.warn("ZenUpdater: install abort no network")
         screen:update{ subtitle = _("Update failed: network connection lost."), button = _("OK"), dismissable = true }
         return
     end
 
     local zip_path = plugins_dir .. "/zen_ui_update.zip"
+    local plugin_name = plugin_root:match("([^/]+)$") or "zen_ui.koplugin"
+    local active_dir = plugins_dir .. "/" .. plugin_name
+    local backup_dir = plugins_dir .. "/" .. plugin_name .. ".backup"
+    local stage_parent = plugins_dir .. "/.zen_ui_update_stage"
+    local staged_dir = stage_parent .. "/" .. plugin_name
+    logger.dbg(
+        "ZenUpdater: install paths active=", active_dir,
+        " backup=", backup_dir,
+        " stage_parent=", stage_parent,
+        " staged=", staged_dir,
+        " zip=", zip_path
+    )
+
+    local function fail_with(msg)
+        logger.warn("ZenUpdater: install fail:", msg)
+        screen:update{ subtitle = msg, button = _("OK"), dismissable = true }
+    end
+
+    local function rollback_active_from_backup()
+        logger.warn("ZenUpdater: rollback start from backup")
+        -- Remove partial active tree before restoring backup.
+        if path_exists(active_dir) then
+            logger.dbg("ZenUpdater: rollback removing partial active:", active_dir)
+            safe_remove_tree(active_dir)
+        end
+        local ok_restore = safe_rename(backup_dir, active_dir)
+        logger.warn("ZenUpdater: rollback done ok=", tostring(ok_restore))
+        return ok_restore
+    end
 
     -- Trapper:wrap() runs the function as a coroutine so UIManager stays alive.
     Trapper:wrap(function()
@@ -1016,6 +1226,7 @@ local function _do_install(screen, plugin_root, plugins_dir)
         local completed, ok, err = Trapper:dismissableRunInSubprocess(function()
             return https_download(M._dl_url, zip_path, M._latest_sha256)
         end, screen)
+        logger.dbg("ZenUpdater: download subprocess result completed=", tostring(completed), "ok=", tostring(ok), "err=", tostring(err))
 
         UIManager:unschedule(timeout_cb)
         screen._on_button_action = nil  -- prevent stale cancel action on subsequent button states
@@ -1043,22 +1254,114 @@ local function _do_install(screen, plugin_root, plugins_dir)
             return
         end
 
-        screen:update{ subtitle = _("Installing…"), button = false }
-        UIManager:forceRePaint()
-
-        local rm_rc = os.execute(string.format("rm -rf %q", plugin_root))
-        if rm_rc ~= 0 and rm_rc ~= true then
+        -- Preflight checks before touching the active plugin folder.
+        logger.dbg("ZenUpdater: preflight start")
+        if not prepare_plugins_dir_writable(plugins_dir) then
             os.remove(zip_path)
-            screen:update{ subtitle = _("Failed to remove existing plugin."), button = _("OK"), dismissable = true }
+            fail_with(_("Update failed: plugin directory is not writable."))
             return
         end
 
-        local unzip_rc = os.execute(string.format("unzip -q %q -d %q", zip_path, plugins_dir))
-        os.remove(zip_path)
-        if unzip_rc ~= 0 and unzip_rc ~= true then
-            screen:update{ subtitle = _("Failed to unpack update."), button = _("OK"), dismissable = true }
+        if not run_shell_ok(string.format("unzip -t %q >/dev/null 2>&1", zip_path), "zip_integrity") then
+            os.remove(zip_path)
+            fail_with(_("Update failed: corrupted update package."))
             return
         end
+
+        local zip_ok, zip_reason = validate_zip_layout(zip_path, plugin_name)
+        if not zip_ok then
+            os.remove(zip_path)
+            logger.warn("ZenUpdater: rejected update zip layout:", tostring(zip_reason))
+            fail_with(_("Update failed: invalid package layout."))
+            return
+        end
+
+        screen:update{ subtitle = _("Installing") .. "...", button = false }
+        UIManager:forceRePaint()
+        logger.dbg("ZenUpdater: install staging begin")
+
+        -- Clean stale leftovers from previous interrupted updates.
+        safe_remove_tree(stage_parent)
+
+        if not path_exists(active_dir) and path_exists(backup_dir) then
+            logger.warn("ZenUpdater: active folder missing; restoring from backup before update")
+            if not safe_rename(backup_dir, active_dir) then
+                os.remove(zip_path)
+                fail_with(_("Update failed: could not restore previous plugin backup."))
+                return
+            end
+        end
+
+        safe_remove_tree(backup_dir)
+
+        if not run_shell_ok(string.format("mkdir -p %q", stage_parent), "mkdir_stage_parent") then
+            os.remove(zip_path)
+            fail_with(_("Update failed: could not prepare staging area."))
+            return
+        end
+
+        if not run_shell_ok(string.format("unzip -q %q -d %q", zip_path, stage_parent), "unzip_to_stage") then
+            safe_remove_tree(stage_parent)
+            os.remove(zip_path)
+            fail_with(_("Update failed: could not unpack update package."))
+            return
+        end
+
+        local staged_ok, staged_reason = validate_plugin_tree(staged_dir)
+        if not staged_ok then
+            logger.warn("ZenUpdater: staged validation failed:", tostring(staged_reason))
+            safe_remove_tree(stage_parent)
+            os.remove(zip_path)
+            fail_with(_("Update failed: staged plugin validation failed."))
+            return
+        end
+
+        if not path_exists(active_dir) then
+            logger.warn("ZenUpdater: install active dir missing before backup rename:", active_dir)
+            safe_remove_tree(stage_parent)
+            os.remove(zip_path)
+            fail_with(_("Update failed: active plugin folder not found."))
+            return
+        end
+
+        logger.dbg("ZenUpdater: swap start moving active to backup")
+        if not safe_rename(active_dir, backup_dir) then
+            safe_remove_tree(stage_parent)
+            os.remove(zip_path)
+            fail_with(_("Update failed: could not create backup."))
+            return
+        end
+
+        logger.dbg("ZenUpdater: swap activating staged plugin")
+        if not safe_rename(staged_dir, active_dir) then
+            logger.warn("ZenUpdater: activation rename failed, attempting rollback")
+            safe_remove_tree(stage_parent)
+            os.remove(zip_path)
+            if rollback_active_from_backup() then
+                fail_with(_("Update failed: could not activate new version."))
+            else
+                fail_with(_("Update failed and rollback failed."))
+            end
+            return
+        end
+
+        safe_remove_tree(stage_parent)
+
+        local active_ok, active_reason = validate_plugin_tree(active_dir)
+        if not active_ok then
+            logger.warn("ZenUpdater: post-swap validation failed:", tostring(active_reason))
+            os.remove(zip_path)
+            if rollback_active_from_backup() then
+                fail_with(_("Update failed: new version is invalid."))
+            else
+                fail_with(_("Update failed and rollback failed."))
+            end
+            return
+        end
+
+        safe_remove_tree(backup_dir)
+        os.remove(zip_path)
+        logger.info("ZenUpdater: install transaction completed successfully")
 
         clear_update_state()
         local gs2 = get_gs()
@@ -1067,7 +1370,7 @@ local function _do_install(screen, plugin_root, plugins_dir)
             pcall(gs2.flush, gs2)
         end
 
-        screen:update{ subtitle = _("Rebooting…"), button = false }
+        screen:update{ subtitle = _("Rebooting") .. "...", button = false }
         UIManager:forceRePaint()
         UIManager:scheduleIn(1, function()
             UIManager:broadcastEvent(require("ui/event"):new("Restart"))
@@ -1106,7 +1409,7 @@ local function _show_update_screen_and_install(plugin)
     screen._on_button_action = function()
         local progress_screen = ZenScreen:new{
             title        = _("Zen UI"),
-            subtitle     = _("Downloading…"),
+            subtitle     = _("Downloading") .. "...",
             button       = false,
             later_button = false,
             dismissable  = false,
@@ -1179,7 +1482,7 @@ function M.build_update_now_item(plugin)
             local function run_check()
                 local screen
                 screen = ZenScreen:new{
-                    subtitle     = _("Checking for updates…"),
+                    subtitle     = _("Checking for updates") .. "...",
                     button       = _("Cancel"),
                     later_button = false,
                     dismissable  = false,
@@ -1270,7 +1573,7 @@ function M.build_changelog_item()
                 local screen = ZenScreen:new{
                     title        = _("Changelog"),
                     title_icon   = true,
-                    scroll_text  = _("Loading changelog..."),
+                    scroll_text  = _("Loading changelog") .. "...",
                     button       = false,
                     later_button = _("Close"),
                     dismissable  = true,
