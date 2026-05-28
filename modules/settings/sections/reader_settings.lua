@@ -68,7 +68,7 @@ function M.build(ctx)
                 callback = function(touchmenu_instance)
                     if type(config.reader_top_status_bar) ~= "table" then config.reader_top_status_bar = {} end
                     local key = slot_name .. "_show_separator"
-                    config.reader_top_status_bar[key] = not (config.reader_top_status_bar[key] == true)
+                    config.reader_top_status_bar[key] = config.reader_top_status_bar[key] ~= true
                     save_clock()
                     if touchmenu_instance then touchmenu_instance:updateItems() end
                 end,
