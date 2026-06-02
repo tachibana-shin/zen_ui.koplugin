@@ -427,7 +427,8 @@ local function apply_browser_list_item_layout()
 
             title   = title   and BD.auto(title)   or BD.filename(filename_without_suffix)
             if title and #title > 60 then
-                title = title:sub(1, 60) .. "…"
+                title = title:sub(1, 60)
+                title = util.fixUtf8(title, "") .. "…"
             end
             authors = authors and BD.auto(authors)
 

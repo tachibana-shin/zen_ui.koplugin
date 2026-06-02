@@ -24,6 +24,7 @@ local function apply_reader_top_status_bar()
     local Font     = require("ui/font")
     local datetime = require("datetime")
     local UIManager = require("ui/uimanager")
+    local util = require("util")
     local _ = require("gettext")
     local Screen = Device.screen
     local ReaderView = require("apps/reader/modules/readerview")
@@ -164,7 +165,10 @@ local function apply_reader_top_status_bar()
         local props = doc_ctx.ui.doc_props
         local title = props and props.title
         if not title or title == "" then return nil end
-        if #title > 40 then title = title:sub(1, 37) .. "..." end
+        if #title > 40 then
+            title = title:sub(1, 37)
+            title = util.fixUtf8(title, "") .. "..."
+        end
         return title, nil
     end
 
@@ -173,7 +177,10 @@ local function apply_reader_top_status_bar()
         local props = doc_ctx.ui.doc_props
         local authors = props and props.authors
         if not authors or authors == "" then return nil end
-        if #authors > 30 then authors = authors:sub(1, 27) .. "..." end
+        if #authors > 30 then
+            authors = authors:sub(1, 27)
+            authors = util.fixUtf8(authors, "") .. "..."
+        end
         return authors, nil
     end
 
@@ -183,7 +190,10 @@ local function apply_reader_top_status_bar()
         if not toc then return nil end
         local chapter = toc:getTocTitleOfCurrentPage()
         if not chapter or chapter == "" then return nil end
-        if #chapter > 35 then chapter = chapter:sub(1, 32) .. "..." end
+        if #chapter > 35 then
+            chapter = chapter:sub(1, 32)
+            chapter = util.fixUtf8(chapter, "") .. "..."
+        end
         return chapter, nil
     end
 
